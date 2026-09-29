@@ -12,10 +12,11 @@ import (
 
 type PaymentClient struct {
 	client
+	circuit_breaker CircuitBreakerStrategy
 }
 
 func NewPaymentClient(baseURL string, timeout time.Duration) *PaymentClient {
-	return &PaymentClient{client: newClient("Payment Service", baseURL, timeout)}
+	return &PaymentClient{client: newClient("Payment Service", baseURL, timeout), circuit_breaker: DefaultCircuitBreaker()}
 }
 
 type paymentDTO struct {
@@ -35,7 +36,7 @@ type createPaymentDTO struct {
 func (c *PaymentClient) Create(ctx context.Context, price int) (domain.Payment, error) {
 	var payment paymentDTO
 	req := request{method: http.MethodPost, path: "/api/v1/payments", body: createPaymentDTO{Price: price}}
-	if err := c.do(ctx, req, &payment); err != nil {
+	if err := WrapCB(c.circuit_breaker, c.do(ctx, req, &payment)); err != nil {
 		return domain.Payment{}, err
 	}
 	return payment.toDomain(), nil
@@ -43,12 +44,17 @@ func (c *PaymentClient) Create(ctx context.Context, price int) (domain.Payment, 
 
 func (c *PaymentClient) Get(ctx context.Context, uid uuid.UUID) (domain.Payment, error) {
 	var payment paymentDTO
-	if err := c.do(ctx, request{method: http.MethodGet, path: "/api/v1/payments/" + uid.String()}, &payment); err != nil {
+	if IsOpen(c.circuit_breaker) {
+		payment.PaymentUID = uid
+		payment.Status = domain.RentalCanceled
+		return payment.toDomain(), nil
+	}
+	if err := WrapCB(c.circuit_breaker, c.do(ctx, request{method: http.MethodGet, path: "/api/v1/payments/" + uid.String()}, &payment)); err != nil {
 		return domain.Payment{}, err
 	}
 	return payment.toDomain(), nil
 }
 
 func (c *PaymentClient) Cancel(ctx context.Context, uid uuid.UUID) error {
-	return c.do(ctx, request{method: http.MethodDelete, path: "/api/v1/payments/" + uid.String()}, nil)
+	return WrapCB(c.circuit_breaker, c.do(ctx, request{method: http.MethodDelete, path: "/api/v1/payments/" + uid.String()}, nil))
 }

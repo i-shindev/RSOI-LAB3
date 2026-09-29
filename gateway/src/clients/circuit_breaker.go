@@ -1,0 +1,108 @@
+package clients
+
+import (
+	"errors"
+	"gateway/src/domain"
+	"time"
+)
+
+type State int
+
+const (
+	STATE_CLOSED State = iota
+	STATE_HALF_OPEN
+	STATE_OPEN
+
+	DEFAULT_N            int           = 5
+	DEFAULT_THRESHOLD    float32       = 0.4
+	DEFAULT_REFRESH_TIME time.Duration = time.Minute
+)
+
+type countCircuitBreaker struct {
+	cycle_failures_arr []bool
+	cycle_idx          int
+	failure_count      int
+	failure_threshold  int
+	state              State
+	half_open_delta    time.Duration
+	last_closed        time.Time
+}
+
+type CircuitBreakerStrategy interface {
+	OnRequestCompleted(success bool)
+	GetState() State
+}
+
+func GetCountCircuitBreaker(n int, threshold float32, refresh_time time.Duration) CircuitBreakerStrategy {
+	return &countCircuitBreaker{
+		make([]bool, n),
+		0,
+		0,
+		int(float32(n) * threshold),
+		STATE_CLOSED,
+		refresh_time,
+		time.Time{},
+	}
+}
+
+func DefaultCircuitBreaker() CircuitBreakerStrategy {
+	return GetCountCircuitBreaker(DEFAULT_N, DEFAULT_THRESHOLD, DEFAULT_REFRESH_TIME)
+}
+
+func (cnt *countCircuitBreaker) OnRequestCompleted(success bool) {
+	if cnt.cycle_failures_arr[cnt.cycle_idx] {
+		cnt.failure_count--
+	}
+	cnt.cycle_failures_arr[cnt.failure_count] = !success
+	if !success {
+		cnt.failure_count++
+	}
+	cnt.cycle_idx = (cnt.cycle_idx + 1) % len(cnt.cycle_failures_arr)
+
+	if cnt.failure_count > cnt.failure_threshold {
+		cnt.open()
+	}
+	if success && cnt.GetState() == STATE_HALF_OPEN {
+		cnt.close()
+	}
+}
+func WrapCB(cx CircuitBreakerStrategy, err error) error {
+	var failed bool = false
+	var d *domain.Error
+	if errors.As(err, &d) {
+		if d.Unwrap() == domain.ErrServiceUnavailable {
+			failed = true
+		}
+	}
+	cx.OnRequestCompleted(failed)
+	return err
+}
+func IsOpen(cx CircuitBreakerStrategy) bool {
+	return cx.GetState() == STATE_OPEN
+}
+
+func (cnt *countCircuitBreaker) open() {
+	if cnt.state == STATE_CLOSED || cnt.state == STATE_HALF_OPEN {
+		cnt.state = STATE_OPEN
+		cnt.last_closed = time.Now().Add(cnt.half_open_delta)
+	}
+}
+
+func (cnt *countCircuitBreaker) check_on_half_open() {
+	if cnt.state == STATE_CLOSED {
+		if time.Now().After(cnt.last_closed) {
+			cnt.state = STATE_HALF_OPEN
+		}
+	}
+}
+
+func (cnt *countCircuitBreaker) close() {
+	if cnt.state == STATE_HALF_OPEN {
+		cnt.state = STATE_CLOSED
+	}
+}
+
+func (cnt *countCircuitBreaker) GetState() State {
+	cnt.check_on_half_open()
+	return cnt.state
+}
