@@ -70,3 +70,70 @@
 2. [Hotels Booking System](v2/README.md)
 3. [Car Rental System](v3/README.md)
 4. [Library System](v4/README.md)
+
+## Реализация
+
+Вариант 3 — [Car Rental System](v3/README.md). Все сервисы написаны на Go 1.25
+(стандартный `net/http`, `pgx/v5` для Postgres).
+
+| Сервис | Порт | База | Описание |
+|---|---|---|---|
+| [gateway](gateway/README.md) | 8080 | — | единая точка входа, оркестрация и сборка ответов |
+| [cars-service](cars-service/README.md) | 8070 | `cars` | автомобили, пагинация, резервирование |
+| [rental-service](rental-service/README.md) | 8060 | `rentals` | аренды пользователя и их статусы |
+| [payment-service](payment-service/README.md) | 8050 | `payments` | платежи |
+
+У каждого сервиса есть `spec.json` (OpenAPI 3) и `GET /manage/health`.
+Сервисы друг к другу не обращаются: всё, что требует данных двух сервисов, делает Gateway.
+Каждый сервис работает только со своей базой; схема и тестовые данные создаются init-скриптом
+[db-v3.sql](postgres/scripts/db-v3.sql).
+
+Внутри каждого сервиса одни и те же слои (`src/`):
+
+| Пакет | Что |
+|---|---|
+| `domain` | сущности, валидация, ошибки, интерфейс репозитория (у Gateway — интерфейсы клиентов сервисов) |
+| `service` | бизнес-логика и unit-тесты на mock-репозитории |
+| `repository` | реализация репозитория на Postgres (у Gateway — `clients`, HTTP-клиенты сервисов) |
+| `api` | HTTP-хендлеры, DTO, перевод ошибок в коды ответа |
+
+### Отказоустойчивость
+
+Всё реализовано только на Gateway (`gateway/src`):
+
+* **Circuit Breaker** (`clients/circuit_breaker.go`) — у каждого HTTP-клиента свой. Считает отказы (нет соединения,
+  таймаут, 5xx) в скользящем окне из 5 запросов; при 3 отказах открывается. Через 3 секунды переходит в half-open.
+* **Fallback** (`service/gateway.go`) — если при `GET /api/v1/rental` и
+  `GET /api/v1/rental/{rentalUid}` недоступен Cars Service или Payment Service, вместо ошибки отдаются данные аренды,
+  а `car`/`payment` заполняются заглушкой.
+* **Откат** — бронирование автомобиля при отказе Payment Service или Rental Service отменяет уже выполненные шаги и возвращает 503
+* **Очередь повторов** (`service/retry_queue.go`) — отмена и завершение аренды после успешного шага в Rental Service
+  возвращают 204, неудавшиеся запросы к Cars Service и Payment Service ставятся в очередь и повторяются раз в
+  секунду, пока сервис не ответит. Туда же попадают неудавшиеся шаги отката при бронировании.
+
+### Запуск
+
+```bash
+docker compose up -d --build
+docker compose --profile test run --rm newman
+docker compose down
+```
+
+Второй командой прогоняется папка `success` коллекции `v3/postman` по Gateway внутри сети compose.
+Полный сценарий с остановкой и запуском Payment Service (нужны `newman` и `wget`):
+
+```bash
+./scripts/test-script.sh v3 payment-service 8050
+```
+
+После изменения `postgres/scripts/db-v3.sql` нужен `docker compose down -v`: init-скрипт выполняется только
+на пустом томе.
+
+### Unit-тесты
+
+```bash
+for s in gateway cars-service rental-service payment-service; do (cd $s && go test ./...); done
+```
+
+В CI (`.github/workflows/classroom.yml`) для каждого сервиса выполняются `go vet`, `go build` и `go test`,
+затем образы собираются через compose, и `scripts/test-script.sh` прогоняет сценарий с остановкой Payment Service.

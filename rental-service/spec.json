@@ -1,0 +1,478 @@
+{
+  "openapi": "3.0.1",
+  "info": {
+    "title": "Rental Service",
+    "description": "Аренды пользователей. Хранит только UUID автомобиля и платежа, в Cars и Payment не ходит. Аренда чужого пользователя неотличима от несуществующей (404).",
+    "version": "1.0"
+  },
+  "servers": [
+    {
+      "url": "http://localhost:8060"
+    }
+  ],
+  "paths": {
+    "/manage/health": {
+      "get": {
+        "summary": "Проверка доступности сервиса",
+        "tags": [
+          "Manage"
+        ],
+        "operationId": "health",
+        "responses": {
+          "200": {
+            "description": "Сервис доступен"
+          }
+        }
+      }
+    },
+    "/api/v1/rentals": {
+      "get": {
+        "summary": "Все аренды пользователя",
+        "tags": [
+          "Rentals"
+        ],
+        "operationId": "listRentals",
+        "parameters": [
+          {
+            "name": "X-User-Name",
+            "in": "header",
+            "required": true,
+            "description": "Имя пользователя",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Аренды пользователя",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/RentalResponse"
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Не передан X-User-Name",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ValidationErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "summary": "Создать аренду",
+        "description": "Создаёт аренду в статусе IN_PROGRESS. dateFrom должна быть раньше dateTo.",
+        "tags": [
+          "Rentals"
+        ],
+        "operationId": "createRental",
+        "parameters": [
+          {
+            "name": "X-User-Name",
+            "in": "header",
+            "required": true,
+            "description": "Имя пользователя",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateRentalRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Аренда создана",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RentalResponse"
+                }
+              }
+            },
+            "headers": {
+              "Location": {
+                "description": "/api/v1/rentals/{rentalUid}",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Ошибка валидации данных",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ValidationErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/rentals/{rentalUid}": {
+      "get": {
+        "summary": "Аренда пользователя по UUID",
+        "tags": [
+          "Rentals"
+        ],
+        "operationId": "getRental",
+        "parameters": [
+          {
+            "name": "rentalUid",
+            "in": "path",
+            "required": true,
+            "description": "UUID аренды",
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "X-User-Name",
+            "in": "header",
+            "required": true,
+            "description": "Имя пользователя",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Аренда",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RentalResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Некорректный UUID или не передан X-User-Name",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ValidationErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Аренда не найдена или принадлежит другому пользователю",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "summary": "Отменить аренду",
+        "description": "Переводит аренду IN_PROGRESS → CANCELED; запись не удаляется. Повторная отмена — 204, отмена завершённой — 409.",
+        "tags": [
+          "Rentals"
+        ],
+        "operationId": "cancelRental",
+        "parameters": [
+          {
+            "name": "rentalUid",
+            "in": "path",
+            "required": true,
+            "description": "UUID аренды",
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "X-User-Name",
+            "in": "header",
+            "required": true,
+            "description": "Имя пользователя",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Аренда отменена"
+          },
+          "400": {
+            "description": "Некорректный UUID или не передан X-User-Name",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ValidationErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Аренда не найдена или принадлежит другому пользователю",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Аренда уже завершена",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/rentals/{rentalUid}/finish": {
+      "post": {
+        "summary": "Завершить аренду",
+        "description": "Переводит аренду IN_PROGRESS → FINISHED. Повторное завершение — 204, завершение отменённой — 409.",
+        "tags": [
+          "Rentals"
+        ],
+        "operationId": "finishRental",
+        "parameters": [
+          {
+            "name": "rentalUid",
+            "in": "path",
+            "required": true,
+            "description": "UUID аренды",
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "X-User-Name",
+            "in": "header",
+            "required": true,
+            "description": "Имя пользователя",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Аренда завершена"
+          },
+          "400": {
+            "description": "Некорректный UUID или не передан X-User-Name",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ValidationErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Аренда не найдена или принадлежит другому пользователю",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Аренда уже отменена",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "CreateRentalRequest": {
+        "type": "object",
+        "required": [
+          "carUid",
+          "paymentUid",
+          "dateFrom",
+          "dateTo"
+        ],
+        "example": {
+          "carUid": "109b42f3-198d-4c89-9276-a7520a7120ab",
+          "paymentUid": "238c733c-fb1e-40a9-aadb-73cb8f90675d",
+          "dateFrom": "2021-10-08",
+          "dateTo": "2021-10-11"
+        },
+        "properties": {
+          "carUid": {
+            "type": "string",
+            "format": "uuid",
+            "description": "UUID автомобиля"
+          },
+          "paymentUid": {
+            "type": "string",
+            "format": "uuid",
+            "description": "UUID платежа"
+          },
+          "dateFrom": {
+            "type": "string",
+            "format": "date",
+            "example": "2021-10-08",
+            "description": "Дата начала аренды"
+          },
+          "dateTo": {
+            "type": "string",
+            "format": "date",
+            "example": "2021-10-08",
+            "description": "Дата окончания аренды"
+          }
+        }
+      },
+      "RentalResponse": {
+        "type": "object",
+        "required": [
+          "rentalUid",
+          "username",
+          "carUid",
+          "paymentUid",
+          "dateFrom",
+          "dateTo",
+          "status"
+        ],
+        "example": {
+          "rentalUid": "4fd4fc0c-7840-483c-bcf5-3e2be7d4ea69",
+          "username": "Test Max",
+          "carUid": "109b42f3-198d-4c89-9276-a7520a7120ab",
+          "paymentUid": "238c733c-fb1e-40a9-aadb-73cb8f90675d",
+          "dateFrom": "2021-10-08",
+          "dateTo": "2021-10-11",
+          "status": "IN_PROGRESS"
+        },
+        "properties": {
+          "rentalUid": {
+            "type": "string",
+            "format": "uuid",
+            "description": "UUID аренды"
+          },
+          "username": {
+            "type": "string",
+            "description": "Имя пользователя"
+          },
+          "carUid": {
+            "type": "string",
+            "format": "uuid",
+            "description": "UUID автомобиля"
+          },
+          "paymentUid": {
+            "type": "string",
+            "format": "uuid",
+            "description": "UUID платежа"
+          },
+          "dateFrom": {
+            "type": "string",
+            "format": "date",
+            "example": "2021-10-08",
+            "description": "Дата начала аренды"
+          },
+          "dateTo": {
+            "type": "string",
+            "format": "date",
+            "example": "2021-10-08",
+            "description": "Дата окончания аренды"
+          },
+          "status": {
+            "type": "string",
+            "description": "Статус аренды",
+            "enum": [
+              "IN_PROGRESS",
+              "FINISHED",
+              "CANCELED"
+            ]
+          }
+        }
+      },
+      "ErrorResponse": {
+        "type": "object",
+        "required": [
+          "message"
+        ],
+        "properties": {
+          "message": {
+            "type": "string",
+            "description": "Информация об ошибке"
+          }
+        }
+      },
+      "ErrorDescription": {
+        "type": "object",
+        "required": [
+          "field",
+          "error"
+        ],
+        "properties": {
+          "field": {
+            "type": "string"
+          },
+          "error": {
+            "type": "string"
+          }
+        }
+      },
+      "ValidationErrorResponse": {
+        "type": "object",
+        "required": [
+          "message",
+          "errors"
+        ],
+        "properties": {
+          "message": {
+            "type": "string",
+            "description": "Информация об ошибке"
+          },
+          "errors": {
+            "type": "array",
+            "description": "Массив полей с описанием ошибки",
+            "items": {
+              "$ref": "#/components/schemas/ErrorDescription"
+            }
+          }
+        }
+      }
+    }
+  }
+}

@@ -1,0 +1,409 @@
+{
+  "openapi": "3.0.1",
+  "info": {
+    "title": "Cars Service",
+    "description": "Каталог автомобилей и их резервирование. Ничего не знает об арендах и платежах.",
+    "version": "1.0"
+  },
+  "servers": [
+    {
+      "url": "http://localhost:8070"
+    }
+  ],
+  "paths": {
+    "/manage/health": {
+      "get": {
+        "summary": "Проверка доступности сервиса",
+        "tags": [
+          "Manage"
+        ],
+        "operationId": "health",
+        "responses": {
+          "200": {
+            "description": "Сервис доступен"
+          }
+        }
+      }
+    },
+    "/api/v1/cars": {
+      "get": {
+        "summary": "Список автомобилей с пагинацией",
+        "tags": [
+          "Cars"
+        ],
+        "operationId": "listCars",
+        "parameters": [
+          {
+            "name": "page",
+            "in": "query",
+            "required": false,
+            "description": "Номер страницы, нумерация с 1",
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "default": 1
+            }
+          },
+          {
+            "name": "size",
+            "in": "query",
+            "required": false,
+            "description": "Максимальное количество элементов на странице",
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 100,
+              "default": 10
+            }
+          },
+          {
+            "name": "showAll",
+            "in": "query",
+            "required": false,
+            "description": "true — выводить также зарезервированные автомобили (availability = false)",
+            "schema": {
+              "type": "boolean",
+              "default": false
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Страница автомобилей",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PaginationResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Некорректные параметры пагинации",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ValidationErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/cars/{carUid}": {
+      "get": {
+        "summary": "Информация об автомобиле",
+        "tags": [
+          "Cars"
+        ],
+        "operationId": "getCar",
+        "parameters": [
+          {
+            "name": "carUid",
+            "in": "path",
+            "required": true,
+            "description": "UUID автомобиля",
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Автомобиль",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CarResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Некорректный UUID",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ValidationErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Автомобиль не найден",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/cars/{carUid}/reservation": {
+      "post": {
+        "summary": "Зарезервировать автомобиль",
+        "description": "Атомарно переводит availability из true в false. Если автомобиль уже зарезервирован — 409, состояние не меняется.",
+        "tags": [
+          "Cars"
+        ],
+        "operationId": "reserveCar",
+        "parameters": [
+          {
+            "name": "carUid",
+            "in": "path",
+            "required": true,
+            "description": "UUID автомобиля",
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Автомобиль зарезервирован"
+          },
+          "400": {
+            "description": "Некорректный UUID",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ValidationErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Автомобиль не найден",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Автомобиль уже зарезервирован",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "summary": "Снять резерв с автомобиля",
+        "description": "Идемпотентно: снятие резерва со свободного автомобиля тоже отвечает 204.",
+        "tags": [
+          "Cars"
+        ],
+        "operationId": "releaseCar",
+        "parameters": [
+          {
+            "name": "carUid",
+            "in": "path",
+            "required": true,
+            "description": "UUID автомобиля",
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Резерв снят"
+          },
+          "400": {
+            "description": "Некорректный UUID",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ValidationErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Автомобиль не найден",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "CarResponse": {
+        "type": "object",
+        "required": [
+          "carUid",
+          "brand",
+          "model",
+          "registrationNumber",
+          "price",
+          "available"
+        ],
+        "example": {
+          "carUid": "109b42f3-198d-4c89-9276-a7520a7120ab",
+          "brand": "Mercedes Benz",
+          "model": "GLA 250",
+          "registrationNumber": "ЛО777Х799",
+          "power": 249,
+          "type": "SEDAN",
+          "price": 3500,
+          "available": true
+        },
+        "properties": {
+          "carUid": {
+            "type": "string",
+            "format": "uuid",
+            "description": "UUID автомобиля"
+          },
+          "brand": {
+            "type": "string",
+            "description": "Марка автомобиля"
+          },
+          "model": {
+            "type": "string",
+            "description": "Модель автомобиля"
+          },
+          "registrationNumber": {
+            "type": "string",
+            "description": "Регистрационный номер автомобиля"
+          },
+          "power": {
+            "type": "integer",
+            "description": "Мощность автомобиля в лошадиных силах"
+          },
+          "type": {
+            "type": "string",
+            "description": "Тип автомобиля",
+            "enum": [
+              "SEDAN",
+              "SUV",
+              "MINIVAN",
+              "ROADSTER"
+            ]
+          },
+          "price": {
+            "type": "integer",
+            "description": "Цена автомобиля за сутки"
+          },
+          "available": {
+            "type": "boolean",
+            "description": "Флаг, указывающий что автомобиль доступен для бронирования"
+          }
+        }
+      },
+      "PaginationResponse": {
+        "type": "object",
+        "required": [
+          "page",
+          "pageSize",
+          "totalElements",
+          "items"
+        ],
+        "example": {
+          "page": 1,
+          "pageSize": 1,
+          "totalElements": 1,
+          "items": [
+            {
+              "carUid": "109b42f3-198d-4c89-9276-a7520a7120ab",
+              "brand": "Mercedes Benz",
+              "model": "GLA 250",
+              "registrationNumber": "ЛО777Х799",
+              "power": 249,
+              "type": "SEDAN",
+              "price": 3500,
+              "available": true
+            }
+          ]
+        },
+        "properties": {
+          "page": {
+            "type": "integer",
+            "description": "Номер страницы"
+          },
+          "pageSize": {
+            "type": "integer",
+            "description": "Количество элементов на этой странице"
+          },
+          "totalElements": {
+            "type": "integer",
+            "description": "Общее количество элементов"
+          },
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/CarResponse"
+            }
+          }
+        }
+      },
+      "ErrorResponse": {
+        "type": "object",
+        "required": [
+          "message"
+        ],
+        "properties": {
+          "message": {
+            "type": "string",
+            "description": "Информация об ошибке"
+          }
+        }
+      },
+      "ErrorDescription": {
+        "type": "object",
+        "required": [
+          "field",
+          "error"
+        ],
+        "properties": {
+          "field": {
+            "type": "string"
+          },
+          "error": {
+            "type": "string"
+          }
+        }
+      },
+      "ValidationErrorResponse": {
+        "type": "object",
+        "required": [
+          "message",
+          "errors"
+        ],
+        "properties": {
+          "message": {
+            "type": "string",
+            "description": "Информация об ошибке"
+          },
+          "errors": {
+            "type": "array",
+            "description": "Массив полей с описанием ошибки",
+            "items": {
+              "$ref": "#/components/schemas/ErrorDescription"
+            }
+          }
+        }
+      }
+    }
+  }
+}

@@ -1,0 +1,276 @@
+{
+  "openapi": "3.0.1",
+  "info": {
+    "title": "Payment Service",
+    "description": "Платежи. Ничего не знает об автомобилях и арендах: сумму считает Gateway.",
+    "version": "1.0"
+  },
+  "servers": [
+    {
+      "url": "http://localhost:8050"
+    }
+  ],
+  "paths": {
+    "/manage/health": {
+      "get": {
+        "summary": "Проверка доступности сервиса",
+        "tags": [
+          "Manage"
+        ],
+        "operationId": "health",
+        "responses": {
+          "200": {
+            "description": "Сервис доступен"
+          }
+        }
+      }
+    },
+    "/api/v1/payments": {
+      "post": {
+        "summary": "Создать платёж",
+        "description": "Создаёт платёж в статусе PAID.",
+        "tags": [
+          "Payments"
+        ],
+        "operationId": "createPayment",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreatePaymentRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Платёж создан",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PaymentResponse"
+                }
+              }
+            },
+            "headers": {
+              "Location": {
+                "description": "/api/v1/payments/{paymentUid}",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Ошибка валидации данных",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ValidationErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/payments/{paymentUid}": {
+      "get": {
+        "summary": "Информация о платеже",
+        "tags": [
+          "Payments"
+        ],
+        "operationId": "getPayment",
+        "parameters": [
+          {
+            "name": "paymentUid",
+            "in": "path",
+            "required": true,
+            "description": "UUID платежа",
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Платёж",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PaymentResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Некорректный UUID",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ValidationErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Платёж не найден",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "summary": "Отменить платёж",
+        "description": "Переводит платёж в статус CANCELED; запись не удаляется. Идемпотентно: отмена уже отменённого платежа тоже отвечает 204.",
+        "tags": [
+          "Payments"
+        ],
+        "operationId": "cancelPayment",
+        "parameters": [
+          {
+            "name": "paymentUid",
+            "in": "path",
+            "required": true,
+            "description": "UUID платежа",
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Платёж отменён"
+          },
+          "400": {
+            "description": "Некорректный UUID",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ValidationErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Платёж не найден",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "CreatePaymentRequest": {
+        "type": "object",
+        "required": [
+          "price"
+        ],
+        "example": {
+          "price": 10500
+        },
+        "properties": {
+          "price": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "Сумма платежа"
+          }
+        }
+      },
+      "PaymentResponse": {
+        "type": "object",
+        "required": [
+          "paymentUid",
+          "status",
+          "price"
+        ],
+        "example": {
+          "paymentUid": "238c733c-fb1e-40a9-aadb-73cb8f90675d",
+          "status": "PAID",
+          "price": 10500
+        },
+        "properties": {
+          "paymentUid": {
+            "type": "string",
+            "format": "uuid",
+            "description": "UUID платежа"
+          },
+          "status": {
+            "type": "string",
+            "description": "Статус платежа",
+            "enum": [
+              "PAID",
+              "CANCELED"
+            ]
+          },
+          "price": {
+            "type": "integer",
+            "description": "Сумма платежа"
+          }
+        }
+      },
+      "ErrorResponse": {
+        "type": "object",
+        "required": [
+          "message"
+        ],
+        "properties": {
+          "message": {
+            "type": "string",
+            "description": "Информация об ошибке"
+          }
+        }
+      },
+      "ErrorDescription": {
+        "type": "object",
+        "required": [
+          "field",
+          "error"
+        ],
+        "properties": {
+          "field": {
+            "type": "string"
+          },
+          "error": {
+            "type": "string"
+          }
+        }
+      },
+      "ValidationErrorResponse": {
+        "type": "object",
+        "required": [
+          "message",
+          "errors"
+        ],
+        "properties": {
+          "message": {
+            "type": "string",
+            "description": "Информация об ошибке"
+          },
+          "errors": {
+            "type": "array",
+            "description": "Массив полей с описанием ошибки",
+            "items": {
+              "$ref": "#/components/schemas/ErrorDescription"
+            }
+          }
+        }
+      }
+    }
+  }
+}
