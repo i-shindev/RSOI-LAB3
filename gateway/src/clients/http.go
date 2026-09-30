@@ -42,7 +42,7 @@ func newClient(name, baseURL string, timeout time.Duration) client {
 
 func (c client) do(ctx context.Context, req request, out any) error {
 	if IsOpen(c.circuit_breaker) {
-		return domain.NewError(domain.ErrCircuitOpen, "%s is unavailable", c.name)
+		return domain.NewError(domain.ErrCircuitOpen, "%s unavailable", c.name)
 	}
 	target := c.baseURL + req.path
 	if len(req.query) > 0 {
@@ -101,7 +101,7 @@ func (c client) readResponse(response *http.Response, req request, out any) (err
 }
 
 func (c client) unavailable(cause error) error {
-	return &domain.Error{Kind: domain.ErrServiceUnavailable, Message: c.name + " is unavailable", Cause: cause}
+	return &domain.Error{Kind: domain.ErrServiceUnavailable, Message: c.name + " unavailable", Cause: cause}
 }
 
 func (c client) message(body io.Reader) string {

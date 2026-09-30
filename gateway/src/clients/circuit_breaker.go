@@ -14,7 +14,7 @@ const (
 
 	DEFAULT_N            int           = 5
 	DEFAULT_THRESHOLD    float32       = 0.4
-	DEFAULT_REFRESH_TIME time.Duration = 10 * time.Second
+	DEFAULT_REFRESH_TIME time.Duration = 3 * time.Second
 )
 
 type countCircuitBreaker struct {

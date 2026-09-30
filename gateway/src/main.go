@@ -31,7 +31,7 @@ func run() error {
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
-	rq := service.NewRetryQueue(time.Second * 10)
+	rq := service.NewRetryQueue(time.Second)
 	gateway := service.NewGateway(
 		clients.NewCarsClient(cfg.CarsServiceURL, cfg.RequestTimeout),
 		clients.NewRentalClient(cfg.RentalServiceURL, cfg.RequestTimeout),

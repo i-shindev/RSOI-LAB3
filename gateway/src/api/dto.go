@@ -38,9 +38,9 @@ type carInfo struct {
 }
 
 type paymentInfo struct {
-	PaymentUID string `json:"paymentUid"`
-	Status     string `json:"status"`
-	Price      int    `json:"price"`
+	PaymentUID string `json:"paymentUid,omitempty"`
+	Status     string `json:"status,omitempty"`
+	Price      *int   `json:"price,omitempty"`
 }
 
 type rentalResponse struct {
@@ -102,7 +102,10 @@ func toPaginationResponse(page domain.CarsPage) paginationResponse {
 }
 
 func toPaymentInfo(payment domain.Payment) paymentInfo {
-	return paymentInfo{PaymentUID: payment.UID.String(), Status: payment.Status, Price: payment.Price}
+	if payment.Status == "" { // fallback: Payment Service was unavailable
+		return paymentInfo{}
+	}
+	return paymentInfo{PaymentUID: payment.UID.String(), Status: payment.Status, Price: &payment.Price}
 }
 
 func toRentalResponse(details domain.RentalDetails) rentalResponse {
