@@ -8,6 +8,10 @@ import (
 	"gateway/src/domain"
 )
 
+type mockRetryQueue struct {
+	// TODO
+}
+
 type mockCars struct {
 	cars      map[uuid.UUID]domain.Car
 	lastQuery domain.ListCarsQuery

@@ -10,6 +10,7 @@ var (
 	ErrNotFound           = errors.New("not found")
 	ErrConflict           = errors.New("conflict")
 	ErrServiceUnavailable = errors.New("service unavailable")
+	ErrCircuitOpen        = fmt.Errorf("circuit open: %w", ErrServiceUnavailable)
 )
 
 type Error struct {

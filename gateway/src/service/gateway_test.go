@@ -21,6 +21,10 @@ type fixture struct {
 	car      domain.Car
 }
 
+type mockRetryQueue struct {
+	// TODO
+}
+
 func newFixture() *fixture {
 	car := domain.Car{
 		UID:                uuid.MustParse("109b42f3-198d-4c89-9276-a7520a7120ab"),
@@ -36,7 +40,7 @@ func newFixture() *fixture {
 		payments: &mockPayments{payments: map[uuid.UUID]domain.Payment{}},
 		car:      car,
 	}
-	f.gateway = service.NewGateway(f.cars, f.rentals, f.payments)
+	f.gateway = service.NewGateway(f.cars, f.rentals, f.payments, service.NewRetryQueue(time.Millisecond))
 	return f
 }
 

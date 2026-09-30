@@ -14,14 +14,19 @@ type Gateway struct {
 	cars     domain.CarsClient
 	rentals  domain.RentalClient
 	payments domain.PaymentClient
+	rq       RetryQueue
 }
 
-func NewGateway(cars domain.CarsClient, rentals domain.RentalClient, payments domain.PaymentClient) *Gateway {
-	return &Gateway{cars: cars, rentals: rentals, payments: payments}
+func NewGateway(cars domain.CarsClient, rentals domain.RentalClient, payments domain.PaymentClient, retry_queue RetryQueue) *Gateway {
+	return &Gateway{cars: cars, rentals: rentals, payments: payments, rq: retry_queue}
 }
 
 func (g *Gateway) ListCars(ctx context.Context, query domain.ListCarsQuery) (domain.CarsPage, error) {
-	return g.cars.List(ctx, query)
+	res, err := g.cars.List(ctx, query)
+	if errors.Is(err, domain.ErrCircuitOpen) {
+		return domain.CarsPage{}, nil
+	}
+	return res, err
 }
 
 func (g *Gateway) ListRentals(ctx context.Context, username string) ([]domain.RentalDetails, error) {
@@ -29,6 +34,9 @@ func (g *Gateway) ListRentals(ctx context.Context, username string) ([]domain.Re
 		return nil, err
 	}
 	rentals, err := g.rentals.List(ctx, username)
+	if errors.Is(err, domain.ErrCircuitOpen) {
+		return make([]domain.RentalDetails, 0), nil
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -56,14 +64,25 @@ func (g *Gateway) GetRental(ctx context.Context, username string, uid uuid.UUID)
 		return domain.RentalDetails{}, err
 	}
 	rental, err := g.rentals.Get(ctx, username, uid)
+	if errors.Is(err, domain.ErrCircuitOpen) {
+		return domain.RentalDetails{Rental: domain.Rental{UID: uid, Username: username}}, nil
+	}
 	if err != nil {
 		return domain.RentalDetails{}, err
 	}
 	car, err := g.cars.Get(ctx, rental.CarUID)
+	if errors.Is(err, domain.ErrCircuitOpen) {
+		err = nil
+		car = domain.Car{UID: rental.CarUID}
+	}
 	if err != nil {
 		return domain.RentalDetails{}, err
 	}
 	payment, err := g.payments.Get(ctx, rental.PaymentUID)
+	if errors.Is(err, domain.ErrCircuitOpen) {
+		err = nil
+		payment = domain.Payment{UID: rental.PaymentUID}
+	}
 	if err != nil {
 		return domain.RentalDetails{}, err
 	}
@@ -87,6 +106,10 @@ func (g *Gateway) BookCar(ctx context.Context, username string, input domain.Boo
 	if errors.Is(err, domain.ErrConflict) {
 		return domain.Booking{}, domain.NewFieldError("carUid", "car is not available for booking")
 	}
+	if errors.Is(err, domain.ErrServiceUnavailable) {
+		g.rq.ScheduleRetry("book car", func(newctx context.Context) error { _, err := g.BookCar(newctx, username, input); return err })
+		return domain.Booking{}, nil
+	}
 	if err != nil {
 		return domain.Booking{}, err
 	}
@@ -94,6 +117,10 @@ func (g *Gateway) BookCar(ctx context.Context, username string, input domain.Boo
 	payment, err := g.payments.Create(ctx, request.Days()*car.Price)
 	if err != nil {
 		g.compensate(ctx, "release car", func(ctx context.Context) error { return g.cars.Release(ctx, car.UID) })
+		if errors.Is(err, domain.ErrServiceUnavailable) {
+			g.rq.ScheduleRetry("book car", func(newctx context.Context) error { _, err := g.BookCar(newctx, username, input); return err })
+			return domain.Booking{}, nil
+		}
 		return domain.Booking{}, err
 	}
 
@@ -106,6 +133,10 @@ func (g *Gateway) BookCar(ctx context.Context, username string, input domain.Boo
 	if err != nil {
 		g.compensate(ctx, "cancel payment", func(ctx context.Context) error { return g.payments.Cancel(ctx, payment.UID) })
 		g.compensate(ctx, "release car", func(ctx context.Context) error { return g.cars.Release(ctx, car.UID) })
+		if errors.Is(err, domain.ErrServiceUnavailable) {
+			g.rq.ScheduleRetry("book car", func(newctx context.Context) error { _, err := g.BookCar(newctx, username, input); return err })
+			return domain.Booking{}, nil
+		}
 		return domain.Booking{}, err
 	}
 	return domain.Booking{Rental: rental, Payment: payment}, nil

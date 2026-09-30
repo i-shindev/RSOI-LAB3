@@ -14,11 +14,10 @@ import (
 
 type CarsClient struct {
 	client
-	circuit_breaker CircuitBreakerStrategy
 }
 
 func NewCarsClient(baseURL string, timeout time.Duration) *CarsClient {
-	return &CarsClient{client: newClient("Cars Service", baseURL, timeout), circuit_breaker: DefaultCircuitBreaker()}
+	return &CarsClient{client: newClient("Cars Service", baseURL, timeout)}
 }
 
 type carDTO struct {
@@ -53,9 +52,6 @@ type carsPageDTO struct {
 }
 
 func (c *CarsClient) List(ctx context.Context, query domain.ListCarsQuery) (domain.CarsPage, error) {
-	if IsOpen(c.circuit_breaker) {
-		return domain.CarsPage{}, nil
-	}
 	params := url.Values{"showAll": {strconv.FormatBool(query.ShowAll)}}
 	if query.Page != nil {
 		params.Set("page", strconv.Itoa(*query.Page))
@@ -64,7 +60,7 @@ func (c *CarsClient) List(ctx context.Context, query domain.ListCarsQuery) (doma
 		params.Set("size", strconv.Itoa(*query.Size))
 	}
 	var page carsPageDTO
-	if err := WrapCB(c.circuit_breaker, c.do(ctx, request{method: http.MethodGet, path: "/api/v1/cars", query: params}, &page)); err != nil {
+	if err := c.do(ctx, request{method: http.MethodGet, path: "/api/v1/cars", query: params}, &page); err != nil {
 		return domain.CarsPage{}, err
 	}
 	items := make([]domain.Car, 0, len(page.Items))
@@ -81,20 +77,16 @@ func (c *CarsClient) List(ctx context.Context, query domain.ListCarsQuery) (doma
 
 func (c *CarsClient) Get(ctx context.Context, uid uuid.UUID) (domain.Car, error) {
 	var car carDTO
-	if IsOpen(c.circuit_breaker) {
-		car.CarUID = uid
-		return car.toDomain(), nil
-	}
-	if err := WrapCB(c.circuit_breaker, c.do(ctx, request{method: http.MethodGet, path: "/api/v1/cars/" + uid.String()}, &car)); err != nil {
+	if err := c.do(ctx, request{method: http.MethodGet, path: "/api/v1/cars/" + uid.String()}, &car); err != nil {
 		return domain.Car{}, err
 	}
 	return car.toDomain(), nil
 }
 
 func (c *CarsClient) Reserve(ctx context.Context, uid uuid.UUID) error {
-	return WrapCB(c.circuit_breaker, c.do(ctx, request{method: http.MethodPost, path: "/api/v1/cars/" + uid.String() + "/reservation"}, nil))
+	return c.do(ctx, request{method: http.MethodPost, path: "/api/v1/cars/" + uid.String() + "/reservation"}, nil)
 }
 
 func (c *CarsClient) Release(ctx context.Context, uid uuid.UUID) error {
-	return WrapCB(c.circuit_breaker, c.do(ctx, request{method: http.MethodDelete, path: "/api/v1/cars/" + uid.String() + "/reservation"}, nil))
+	return c.do(ctx, request{method: http.MethodDelete, path: "/api/v1/cars/" + uid.String() + "/reservation"}, nil)
 }

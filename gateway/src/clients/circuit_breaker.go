@@ -1,8 +1,7 @@
 package clients
 
 import (
-	"errors"
-	"gateway/src/domain"
+	"sync"
 	"time"
 )
 
@@ -26,6 +25,7 @@ type countCircuitBreaker struct {
 	state              State
 	half_open_delta    time.Duration
 	last_closed        time.Time
+	mt                 sync.Mutex
 }
 
 type CircuitBreakerStrategy interface {
@@ -42,6 +42,7 @@ func GetCountCircuitBreaker(n int, threshold float32, refresh_time time.Duration
 		STATE_CLOSED,
 		refresh_time,
 		time.Time{},
+		sync.Mutex{},
 	}
 }
 
@@ -50,32 +51,24 @@ func DefaultCircuitBreaker() CircuitBreakerStrategy {
 }
 
 func (cnt *countCircuitBreaker) OnRequestCompleted(success bool) {
+	cnt.mt.Lock()
+	defer cnt.mt.Unlock()
+
 	if cnt.cycle_failures_arr[cnt.cycle_idx] {
 		cnt.failure_count--
 	}
-	cnt.cycle_failures_arr[cnt.failure_count] = !success
+	cnt.cycle_failures_arr[cnt.cycle_idx] = !success
 	if !success {
 		cnt.failure_count++
 	}
 	cnt.cycle_idx = (cnt.cycle_idx + 1) % len(cnt.cycle_failures_arr)
-
-	if cnt.failure_count > cnt.failure_threshold {
+	cnt.check_on_half_open()
+	if success && cnt.state == STATE_HALF_OPEN {
+		cnt.close()
+	} else if cnt.failure_count > cnt.failure_threshold {
 		cnt.open()
 	}
-	if success && cnt.GetState() == STATE_HALF_OPEN {
-		cnt.close()
-	}
-}
-func WrapCB(cx CircuitBreakerStrategy, err error) error {
-	var failed bool = false
-	var d *domain.Error
-	if errors.As(err, &d) {
-		if d.Unwrap() == domain.ErrServiceUnavailable {
-			failed = true
-		}
-	}
-	cx.OnRequestCompleted(failed)
-	return err
+
 }
 func IsOpen(cx CircuitBreakerStrategy) bool {
 	return cx.GetState() == STATE_OPEN
@@ -89,7 +82,7 @@ func (cnt *countCircuitBreaker) open() {
 }
 
 func (cnt *countCircuitBreaker) check_on_half_open() {
-	if cnt.state == STATE_CLOSED {
+	if cnt.state == STATE_OPEN {
 		if time.Now().After(cnt.last_closed) {
 			cnt.state = STATE_HALF_OPEN
 		}
@@ -99,10 +92,16 @@ func (cnt *countCircuitBreaker) check_on_half_open() {
 func (cnt *countCircuitBreaker) close() {
 	if cnt.state == STATE_HALF_OPEN {
 		cnt.state = STATE_CLOSED
+		clear(cnt.cycle_failures_arr)
+		cnt.failure_count = 0
+		cnt.cycle_idx = 0
 	}
 }
 
 func (cnt *countCircuitBreaker) GetState() State {
+	cnt.mt.Lock()
+	defer cnt.mt.Unlock()
+
 	cnt.check_on_half_open()
 	return cnt.state
 }

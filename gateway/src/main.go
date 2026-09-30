@@ -31,11 +31,12 @@ func run() error {
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
-
+	rq := service.NewRetryQueue(time.Second * 10)
 	gateway := service.NewGateway(
 		clients.NewCarsClient(cfg.CarsServiceURL, cfg.RequestTimeout),
 		clients.NewRentalClient(cfg.RentalServiceURL, cfg.RequestTimeout),
 		clients.NewPaymentClient(cfg.PaymentServiceURL, cfg.RequestTimeout),
+		rq,
 	)
 	server := &http.Server{
 		Addr:              ":" + cfg.Port,
@@ -49,6 +50,7 @@ func run() error {
 			"cars", cfg.CarsServiceURL, "rental", cfg.RentalServiceURL, "payment", cfg.PaymentServiceURL)
 		serverErr <- server.ListenAndServe()
 	}()
+	go rq.Run(ctx)
 
 	select {
 	case err := <-serverErr:

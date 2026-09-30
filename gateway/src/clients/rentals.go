@@ -13,11 +13,10 @@ import (
 
 type RentalClient struct {
 	client
-	circuit_breaker CircuitBreakerStrategy
 }
 
 func NewRentalClient(baseURL string, timeout time.Duration) *RentalClient {
-	return &RentalClient{client: newClient("Rental Service", baseURL, timeout), circuit_breaker: DefaultCircuitBreaker()}
+	return &RentalClient{client: newClient("Rental Service", baseURL, timeout)}
 }
 
 type rentalDTO struct {
@@ -59,10 +58,7 @@ type createRentalDTO struct {
 
 func (c *RentalClient) List(ctx context.Context, username string) ([]domain.Rental, error) {
 	var dtos []rentalDTO
-	if IsOpen(c.circuit_breaker) {
-		return make([]domain.Rental, 0), nil
-	}
-	if err := WrapCB(c.circuit_breaker, c.do(ctx, request{method: http.MethodGet, path: "/api/v1/rentals", username: username}, &dtos)); err != nil {
+	if err := c.do(ctx, request{method: http.MethodGet, path: "/api/v1/rentals", username: username}, &dtos); err != nil {
 		return nil, err
 	}
 	rentals := make([]domain.Rental, 0, len(dtos))
@@ -78,14 +74,8 @@ func (c *RentalClient) List(ctx context.Context, username string) ([]domain.Rent
 
 func (c *RentalClient) Get(ctx context.Context, username string, uid uuid.UUID) (domain.Rental, error) {
 	var dto rentalDTO
-	if IsOpen(c.circuit_breaker) {
-		var res domain.Rental
-		res.Username = username
-		res.UID = uid
-		return res, nil
-	}
 	req := request{method: http.MethodGet, path: "/api/v1/rentals/" + uid.String(), username: username}
-	if err := WrapCB(c.circuit_breaker, c.do(ctx, req, &dto)); err != nil {
+	if err := c.do(ctx, req, &dto); err != nil {
 		return domain.Rental{}, err
 	}
 	return c.convert(dto)
@@ -104,7 +94,7 @@ func (c *RentalClient) Create(ctx context.Context, username string, rental domai
 			DateTo:     rental.DateTo.Format(time.DateOnly),
 		},
 	}
-	if err := WrapCB(c.circuit_breaker, c.do(ctx, req, &dto)); err != nil {
+	if err := c.do(ctx, req, &dto); err != nil {
 		return domain.Rental{}, err
 	}
 	return c.convert(dto)
@@ -112,12 +102,12 @@ func (c *RentalClient) Create(ctx context.Context, username string, rental domai
 
 func (c *RentalClient) Finish(ctx context.Context, username string, uid uuid.UUID) error {
 	req := request{method: http.MethodPost, path: "/api/v1/rentals/" + uid.String() + "/finish", username: username}
-	return WrapCB(c.circuit_breaker, c.do(ctx, req, nil))
+	return c.do(ctx, req, nil)
 }
 
 func (c *RentalClient) Cancel(ctx context.Context, username string, uid uuid.UUID) error {
 	req := request{method: http.MethodDelete, path: "/api/v1/rentals/" + uid.String(), username: username}
-	return WrapCB(c.circuit_breaker, c.do(ctx, req, nil))
+	return c.do(ctx, req, nil)
 }
 
 func (c *RentalClient) convert(dto rentalDTO) (domain.Rental, error) {
