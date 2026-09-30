@@ -93,6 +93,7 @@ services:
       run collection.json
       -e environment.json
       --env-var baseUrl=http://gateway:8080
+      --folder success
       --delay-request 100
     depends_on:
       gateway:

@@ -1236,3 +1236,5 @@ buildNumber.properties
 .mvn/wrapper/maven-wrapper.jar
 # Go module manifest (overrides "*.mod*" from the kernel module section above)
 !go.mod
+# Test scripts from the lab template (overrides "[Ss]cripts" above)
+!/scripts/
