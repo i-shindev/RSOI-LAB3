@@ -14,10 +14,14 @@ type Gateway struct {
 	cars     domain.CarsClient
 	rentals  domain.RentalClient
 	payments domain.PaymentClient
-	rq       RetryQueue
+	rq       RetryScheduler
 }
 
-func NewGateway(cars domain.CarsClient, rentals domain.RentalClient, payments domain.PaymentClient, retry_queue RetryQueue) *Gateway {
+type RetryScheduler interface {
+	ScheduleRetry(name string, work func(ctx context.Context) error)
+}
+
+func NewGateway(cars domain.CarsClient, rentals domain.RentalClient, payments domain.PaymentClient, retry_queue RetryScheduler) *Gateway {
 	return &Gateway{cars: cars, rentals: rentals, payments: payments, rq: retry_queue}
 }
 
@@ -45,12 +49,21 @@ func (g *Gateway) ListRentals(ctx context.Context, username string) ([]domain.Re
 	for _, rental := range rentals {
 		car, cached := cars[rental.CarUID]
 		if !cached {
-			if car, err = g.cars.Get(ctx, rental.CarUID); err != nil {
+			car, err = g.cars.Get(ctx, rental.CarUID)
+			if errors.Is(err, domain.ErrServiceUnavailable) {
+				err = nil
+				car = domain.Car{UID: rental.CarUID}
+			}
+			if err != nil {
 				return nil, err
 			}
 			cars[rental.CarUID] = car
 		}
 		payment, err := g.payments.Get(ctx, rental.PaymentUID)
+		if errors.Is(err, domain.ErrServiceUnavailable) {
+			err = nil
+			payment = domain.Payment{UID: rental.PaymentUID}
+		}
 		if err != nil {
 			return nil, err
 		}
@@ -71,7 +84,7 @@ func (g *Gateway) GetRental(ctx context.Context, username string, uid uuid.UUID)
 		return domain.RentalDetails{}, err
 	}
 	car, err := g.cars.Get(ctx, rental.CarUID)
-	if errors.Is(err, domain.ErrCircuitOpen) {
+	if errors.Is(err, domain.ErrServiceUnavailable) {
 		err = nil
 		car = domain.Car{UID: rental.CarUID}
 	}
@@ -79,7 +92,7 @@ func (g *Gateway) GetRental(ctx context.Context, username string, uid uuid.UUID)
 		return domain.RentalDetails{}, err
 	}
 	payment, err := g.payments.Get(ctx, rental.PaymentUID)
-	if errors.Is(err, domain.ErrCircuitOpen) {
+	if errors.Is(err, domain.ErrServiceUnavailable) {
 		err = nil
 		payment = domain.Payment{UID: rental.PaymentUID}
 	}
@@ -106,21 +119,13 @@ func (g *Gateway) BookCar(ctx context.Context, username string, input domain.Boo
 	if errors.Is(err, domain.ErrConflict) {
 		return domain.Booking{}, domain.NewFieldError("carUid", "car is not available for booking")
 	}
-	if errors.Is(err, domain.ErrServiceUnavailable) {
-		g.rq.ScheduleRetry("book car", func(newctx context.Context) error { _, err := g.BookCar(newctx, username, input); return err })
-		return domain.Booking{}, nil
-	}
 	if err != nil {
 		return domain.Booking{}, err
 	}
 
 	payment, err := g.payments.Create(ctx, request.Days()*car.Price)
 	if err != nil {
-		g.compensate(ctx, "release car", func(ctx context.Context) error { return g.cars.Release(ctx, car.UID) })
-		if errors.Is(err, domain.ErrServiceUnavailable) {
-			g.rq.ScheduleRetry("book car", func(newctx context.Context) error { _, err := g.BookCar(newctx, username, input); return err })
-			return domain.Booking{}, nil
-		}
+		g.runOrRetry(ctx, "release car", func(ctx context.Context) error { return g.cars.Release(ctx, car.UID) })
 		return domain.Booking{}, err
 	}
 
@@ -131,12 +136,8 @@ func (g *Gateway) BookCar(ctx context.Context, username string, input domain.Boo
 		DateTo:     request.DateTo,
 	})
 	if err != nil {
-		g.compensate(ctx, "cancel payment", func(ctx context.Context) error { return g.payments.Cancel(ctx, payment.UID) })
-		g.compensate(ctx, "release car", func(ctx context.Context) error { return g.cars.Release(ctx, car.UID) })
-		if errors.Is(err, domain.ErrServiceUnavailable) {
-			g.rq.ScheduleRetry("book car", func(newctx context.Context) error { _, err := g.BookCar(newctx, username, input); return err })
-			return domain.Booking{}, nil
-		}
+		g.runOrRetry(ctx, "cancel payment", func(ctx context.Context) error { return g.payments.Cancel(ctx, payment.UID) })
+		g.runOrRetry(ctx, "release car", func(ctx context.Context) error { return g.cars.Release(ctx, car.UID) })
 		return domain.Booking{}, err
 	}
 	return domain.Booking{Rental: rental, Payment: payment}, nil
@@ -150,7 +151,8 @@ func (g *Gateway) FinishRental(ctx context.Context, username string, uid uuid.UU
 	if err := g.rentals.Finish(ctx, username, uid); err != nil {
 		return err
 	}
-	return g.cars.Release(ctx, rental.CarUID)
+	g.runOrRetry(ctx, "release car", func(ctx context.Context) error { return g.cars.Release(ctx, rental.CarUID) })
+	return nil
 }
 
 func (g *Gateway) CancelRental(ctx context.Context, username string, uid uuid.UUID) error {
@@ -161,10 +163,9 @@ func (g *Gateway) CancelRental(ctx context.Context, username string, uid uuid.UU
 	if err := g.rentals.Cancel(ctx, username, uid); err != nil {
 		return err
 	}
-	if err := g.cars.Release(ctx, rental.CarUID); err != nil {
-		return err
-	}
-	return g.payments.Cancel(ctx, rental.PaymentUID)
+	g.runOrRetry(ctx, "release car", func(ctx context.Context) error { return g.cars.Release(ctx, rental.CarUID) })
+	g.runOrRetry(ctx, "cancel payment", func(ctx context.Context) error { return g.payments.Cancel(ctx, rental.PaymentUID) })
+	return nil
 }
 
 func (g *Gateway) openRental(ctx context.Context, username string, uid uuid.UUID, target string) (*domain.Rental, error) {
@@ -184,9 +185,16 @@ func (g *Gateway) openRental(ctx context.Context, username string, uid uuid.UUID
 		return nil, domain.NewError(domain.ErrConflict, "rental %s is already %s", uid, rental.Status)
 	}
 }
-
-func (g *Gateway) compensate(ctx context.Context, action string, undo func(context.Context) error) {
-	if err := undo(context.WithoutCancel(ctx)); err != nil {
-		slog.Error("compensation failed", "action", action, "error", err)
+func (g *Gateway) runOrRetry(ctx context.Context, action string, step func(context.Context) error) {
+	var job func(context.Context) error
+	job = func(ctx context.Context) error {
+		err := step(ctx)
+		if errors.Is(err, domain.ErrServiceUnavailable) {
+			g.rq.ScheduleRetry(action, job)
+		}
+		return err
+	}
+	if err := job(context.WithoutCancel(ctx)); err != nil && !errors.Is(err, domain.ErrServiceUnavailable) {
+		slog.Error("step failed", "action", action, "error", err)
 	}
 }

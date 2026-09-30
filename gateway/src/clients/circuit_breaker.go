@@ -68,8 +68,8 @@ func (cnt *countCircuitBreaker) OnRequestCompleted(success bool) {
 	} else if cnt.failure_count > cnt.failure_threshold {
 		cnt.open()
 	}
-
 }
+
 func IsOpen(cx CircuitBreakerStrategy) bool {
 	return cx.GetState() == STATE_OPEN
 }

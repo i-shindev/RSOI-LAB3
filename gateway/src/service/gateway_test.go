@@ -2,6 +2,7 @@ package service_test
 
 import (
 	"context"
+	"errors"
 	"testing"
 	"time"
 
@@ -17,12 +18,9 @@ type fixture struct {
 	cars     *mockCars
 	rentals  *mockRentals
 	payments *mockPayments
+	retries  *mockRetryQueue
 	gateway  *service.Gateway
 	car      domain.Car
-}
-
-type mockRetryQueue struct {
-	// TODO
 }
 
 func newFixture() *fixture {
@@ -38,9 +36,10 @@ func newFixture() *fixture {
 		cars:     &mockCars{cars: map[uuid.UUID]domain.Car{car.UID: car}},
 		rentals:  &mockRentals{rentals: map[uuid.UUID]domain.Rental{}},
 		payments: &mockPayments{payments: map[uuid.UUID]domain.Payment{}},
+		retries:  &mockRetryQueue{},
 		car:      car,
 	}
-	f.gateway = service.NewGateway(f.cars, f.rentals, f.payments, service.NewRetryQueue(time.Millisecond))
+	f.gateway = service.NewGateway(f.cars, f.rentals, f.payments, f.retries)
 	return f
 }
 
@@ -167,5 +166,105 @@ func TestCancelRentalReleasesCarAndCancelsPayment(t *testing.T) {
 	}
 	if status := f.payments.payments[booking.Payment.UID].Status; status != "CANCELED" {
 		t.Fatalf("expected payment CANCELED, got %s", status)
+	}
+}
+
+func TestGetRentalFallsBackWhenPaymentIsUnavailable(t *testing.T) {
+	f := newFixture()
+	booking := f.book(t)
+	f.payments.unavailable = true
+
+	got, err := f.gateway.GetRental(context.Background(), username, booking.Rental.UID)
+
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got.Payment != (domain.Payment{UID: booking.Payment.UID}) {
+		t.Fatalf("expected payment fallback with uid only, got %+v", got.Payment)
+	}
+}
+
+func TestListRentalsFallsBackWhenCarIsUnavailable(t *testing.T) {
+	f := newFixture()
+	f.book(t)
+	f.cars.unavailable = true
+
+	rentals, err := f.gateway.ListRentals(context.Background(), username)
+
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(rentals) != 1 || rentals[0].Car != (domain.Car{UID: f.car.UID}) {
+		t.Fatalf("expected car fallback with uid only, got %+v", rentals)
+	}
+}
+
+func TestBookCarRollsBackWhenPaymentIsUnavailable(t *testing.T) {
+	f := newFixture()
+	f.payments.unavailable = true
+
+	_, err := f.gateway.BookCar(context.Background(), username, domain.BookingInput{
+		CarUID:   &f.car.UID,
+		DateFrom: date("2021-10-08"),
+		DateTo:   date("2021-10-11"),
+	})
+
+	if !errors.Is(err, domain.ErrServiceUnavailable) {
+		t.Fatalf("expected service unavailable, got %v", err)
+	}
+	if !f.cars.cars[f.car.UID].Available {
+		t.Fatal("car reservation should be rolled back")
+	}
+	if len(f.rentals.rentals) != 0 || len(f.retries.jobs) != 0 {
+		t.Fatalf("nothing should be created or queued: rentals %+v, jobs %d", f.rentals.rentals, len(f.retries.jobs))
+	}
+}
+
+func TestCancelRentalQueuesPaymentCancelUntilServiceIsBack(t *testing.T) {
+	f := newFixture()
+	booking := f.book(t)
+	f.payments.unavailable = true
+
+	if err := f.gateway.CancelRental(context.Background(), username, booking.Rental.UID); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if status := f.rentals.rentals[booking.Rental.UID].Status; status != domain.RentalCanceled {
+		t.Fatalf("expected CANCELED, got %s", status)
+	}
+	if !f.cars.cars[f.car.UID].Available {
+		t.Fatal("car should be released")
+	}
+
+	f.retries.runAll()
+	if len(f.retries.jobs) != 1 {
+		t.Fatalf("job should reschedule itself while payment is down, got %d jobs", len(f.retries.jobs))
+	}
+
+	f.payments.unavailable = false
+	f.retries.runAll()
+	if len(f.retries.jobs) != 0 {
+		t.Fatalf("queue should be empty, got %d jobs", len(f.retries.jobs))
+	}
+	if status := f.payments.payments[booking.Payment.UID].Status; status != "CANCELED" {
+		t.Fatalf("expected payment CANCELED after retry, got %s", status)
+	}
+}
+
+func TestFinishRentalQueuesCarReleaseWhenCarsAreUnavailable(t *testing.T) {
+	f := newFixture()
+	booking := f.book(t)
+	f.cars.unavailable = true
+
+	if err := f.gateway.FinishRental(context.Background(), username, booking.Rental.UID); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(f.retries.jobs) != 1 {
+		t.Fatalf("expected car release to be queued, got %d jobs", len(f.retries.jobs))
+	}
+
+	f.cars.unavailable = false
+	f.retries.runAll()
+	if !f.cars.cars[f.car.UID].Available {
+		t.Fatal("car should be released after retry")
 	}
 }
