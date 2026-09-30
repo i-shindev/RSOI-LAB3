@@ -268,3 +268,21 @@ func TestFinishRentalQueuesCarReleaseWhenCarsAreUnavailable(t *testing.T) {
 		t.Fatal("car should be released after retry")
 	}
 }
+
+func TestCriticalSourcesAreNotReplacedWithFallback(t *testing.T) {
+	f := newFixture()
+	booking := f.book(t)
+	f.cars.unavailable = true
+	f.rentals.unavailable = true
+	ctx := context.Background()
+
+	if _, err := f.gateway.ListCars(ctx, domain.ListCarsQuery{}); !errors.Is(err, domain.ErrServiceUnavailable) {
+		t.Fatalf("ListCars: expected service unavailable, got %v", err)
+	}
+	if _, err := f.gateway.ListRentals(ctx, username); !errors.Is(err, domain.ErrServiceUnavailable) {
+		t.Fatalf("ListRentals: expected service unavailable, got %v", err)
+	}
+	if _, err := f.gateway.GetRental(ctx, username, booking.Rental.UID); !errors.Is(err, domain.ErrServiceUnavailable) {
+		t.Fatalf("GetRental: expected service unavailable, got %v", err)
+	}
+}

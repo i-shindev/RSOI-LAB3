@@ -26,11 +26,7 @@ func NewGateway(cars domain.CarsClient, rentals domain.RentalClient, payments do
 }
 
 func (g *Gateway) ListCars(ctx context.Context, query domain.ListCarsQuery) (domain.CarsPage, error) {
-	res, err := g.cars.List(ctx, query)
-	if errors.Is(err, domain.ErrCircuitOpen) {
-		return domain.CarsPage{}, nil
-	}
-	return res, err
+	return g.cars.List(ctx, query)
 }
 
 func (g *Gateway) ListRentals(ctx context.Context, username string) ([]domain.RentalDetails, error) {
@@ -38,9 +34,6 @@ func (g *Gateway) ListRentals(ctx context.Context, username string) ([]domain.Re
 		return nil, err
 	}
 	rentals, err := g.rentals.List(ctx, username)
-	if errors.Is(err, domain.ErrCircuitOpen) {
-		return make([]domain.RentalDetails, 0), nil
-	}
 	if err != nil {
 		return nil, err
 	}
@@ -77,9 +70,6 @@ func (g *Gateway) GetRental(ctx context.Context, username string, uid uuid.UUID)
 		return domain.RentalDetails{}, err
 	}
 	rental, err := g.rentals.Get(ctx, username, uid)
-	if errors.Is(err, domain.ErrCircuitOpen) {
-		return domain.RentalDetails{Rental: domain.Rental{UID: uid, Username: username}}, nil
-	}
 	if err != nil {
 		return domain.RentalDetails{}, err
 	}

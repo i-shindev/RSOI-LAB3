@@ -33,6 +33,9 @@ type mockCars struct {
 }
 
 func (m *mockCars) List(_ context.Context, query domain.ListCarsQuery) (domain.CarsPage, error) {
+	if m.unavailable {
+		return domain.CarsPage{}, errUnavailable
+	}
 	m.lastQuery = query
 	var items []domain.Car
 	for _, car := range m.cars {
@@ -75,10 +78,14 @@ func (m *mockCars) Release(_ context.Context, uid uuid.UUID) error {
 }
 
 type mockRentals struct {
-	rentals map[uuid.UUID]domain.Rental
+	rentals     map[uuid.UUID]domain.Rental
+	unavailable bool
 }
 
 func (m *mockRentals) List(_ context.Context, username string) ([]domain.Rental, error) {
+	if m.unavailable {
+		return nil, errUnavailable
+	}
 	var owned []domain.Rental
 	for _, rental := range m.rentals {
 		if rental.Username == username {
@@ -89,6 +96,9 @@ func (m *mockRentals) List(_ context.Context, username string) ([]domain.Rental,
 }
 
 func (m *mockRentals) Get(_ context.Context, username string, uid uuid.UUID) (domain.Rental, error) {
+	if m.unavailable {
+		return domain.Rental{}, errUnavailable
+	}
 	rental, found := m.rentals[uid]
 	if !found || rental.Username != username {
 		return domain.Rental{}, domain.NewError(domain.ErrNotFound, "rental not found")
