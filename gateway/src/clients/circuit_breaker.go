@@ -47,7 +47,7 @@ func GetCountCircuitBreaker(n int, threshold float32, refresh_time time.Duration
 }
 
 func DefaultCircuitBreaker() CircuitBreakerStrategy {
-	return GetCountCircuitBreaker(DEFAULT_N, DEFAULT_THRESHOLD, DEFAULT_REFRESH_TIME)
+	return GetNewCountCircuitBreaker(DEFAULT_N, DEFAULT_THRESHOLD, DEFAULT_REFRESH_TIME)
 }
 
 func (cnt *countCircuitBreaker) OnRequestCompleted(success bool) {
